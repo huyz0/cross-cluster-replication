@@ -132,11 +132,25 @@ class TransportReplayChangesAction @Inject constructor(settings: Settings, trans
                 result = primaryShard.applyTranslogOperation(op, Engine.Operation.Origin.PRIMARY)
             }
 
+            checkLeaderSeqNo(op, result)
             location = syncOperationResultOrThrow(result, location)
         }
         val response = ReplayChangesResponse() // TODO: Figure out what to add to response
         return WritePrimaryResult(request, response, location, null, primaryShard, log)
     }
+    /**
+     * A follower's operations keep the leader's sequence numbers. An engine that assigned its own (one
+     * that is not a follower engine, as when `plugins.replication.follower.engine: delegate` finds no
+     * plugin serving follower indices) would diverge from the leader silently, so the replay fails instead.
+     */
+    private fun checkLeaderSeqNo(op: Translog.Operation, result: Engine.Result) {
+        if (result.resultType == Engine.Result.Type.SUCCESS && result.seqNo != op.seqNo()) {
+            throw IllegalStateException("follower engine applied operation [${op.seqNo()}] at sequence number [${result.seqNo}]: " +
+                "the engine serving this follower index does not replay at the leader's sequence numbers " +
+                "(check [plugins.replication.follower.engine])")
+        }
+    }
+
     fun shouldSyncMappingAndRetry(result: Engine.Result): Boolean {
         /*
             1. Incase the doc index requires a mapping update, we get the result as MAPPING_UPDATE_REQUIRED.

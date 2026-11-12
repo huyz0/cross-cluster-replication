@@ -188,6 +188,20 @@ internal class ReplicationPlugin : Plugin(), ActionPlugin, PersistentTaskPlugin,
         const val MIN_OPS_BATCH_SIZE = 16
         val REPLICATED_INDEX_SETTING: Setting<String> = Setting.simpleString("index.plugins.replication.follower.leader_index",
             Setting.Property.InternalIndex, Setting.Property.IndexScope)
+        const val FOLLOWER_ENGINE_REPLICATION = "replication"
+        const val FOLLOWER_ENGINE_DELEGATE = "delegate"
+        /**
+         * Which engine serves follower indices on this node. `replication` (the default): this plugin's
+         * [ReplicationEngine]. `delegate`: this plugin offers no engine for followers, so the one engine
+         * plugin that serves follower indices (it must replay operations at the leader's sequence numbers)
+         * provides it. OpenSearch accepts at most one engine factory per index.
+         */
+        val REPLICATION_FOLLOWER_ENGINE: Setting<String> = Setting.simpleString("plugins.replication.follower.engine",
+            FOLLOWER_ENGINE_REPLICATION, { value ->
+                require(value == FOLLOWER_ENGINE_REPLICATION || value == FOLLOWER_ENGINE_DELEGATE) {
+                    "[plugins.replication.follower.engine] must be [$FOLLOWER_ENGINE_REPLICATION] or [$FOLLOWER_ENGINE_DELEGATE], got [$value]"
+                }
+            }, Setting.Property.NodeScope)
         // Cluster-level batch size setting
         val REPLICATION_FOLLOWER_OPS_BATCH_SIZE: Setting<Int> = Setting.intSetting("plugins.replication.follower.index.ops_batch_size", 50000, MIN_OPS_BATCH_SIZE,
             Setting.Property.Dynamic, Setting.Property.NodeScope)
@@ -413,7 +427,7 @@ internal class ReplicationPlugin : Plugin(), ActionPlugin, PersistentTaskPlugin,
             REPLICATION_INDEX_TRANSLOG_RETENTION_SIZE, REPLICATION_FOLLOWER_BLOCK_START, REPLICATION_AUTOFOLLOW_CONCURRENT_REPLICATION_JOBS_TRIGGER_SIZE,
             REPLICATION_FOLLOWER_CONCURRENT_WRITERS_PER_SHARD, REPLICATION_REPLICATE_INDEX_DELETION,
             REPLICATION_FOLLOWER_BULK_BATCH_SIZE,
-            REPLICATION_FOLLOWER_BULK_POLL_TIMEOUT)
+            REPLICATION_FOLLOWER_BULK_POLL_TIMEOUT, REPLICATION_FOLLOWER_ENGINE)
     }
     override fun getInternalRepositories(env: Environment, namedXContentRegistry: NamedXContentRegistry,
                                          clusterService: ClusterService, recoverySettings: RecoverySettings): Map<String, Repository.Factory> {
@@ -423,7 +437,8 @@ internal class ReplicationPlugin : Plugin(), ActionPlugin, PersistentTaskPlugin,
     }
 
     override fun getEngineFactory(indexSettings: IndexSettings): Optional<EngineFactory> {
-        return if (indexSettings.settings.get(REPLICATED_INDEX_SETTING.key) != null) {
+        val delegated = REPLICATION_FOLLOWER_ENGINE.get(indexSettings.nodeSettings) == FOLLOWER_ENGINE_DELEGATE
+        return if (indexSettings.settings.get(REPLICATED_INDEX_SETTING.key) != null && !delegated) {
             Optional.of(EngineFactory { config ->
                 // Use NRTSegmentReplicationEngine for SEGMENT replication type indices replica shards
                 if (config.isReadOnlyReplica) {

@@ -153,6 +153,15 @@ For much detailed instructions/examples please refer to [HANDBOOK](HANDBOOK.md).
 
 For more details on design and architecture, please refer to [RFC](docs/RFC.md) under docs.
 
+## Follower engine
+
+By default a follower index runs on this plugin's `ReplicationEngine`. OpenSearch accepts only one engine
+factory per index, so another engine plugin cannot also serve followers. Set the node setting
+`plugins.replication.follower.engine: delegate` (default `replication`) on the follower cluster's nodes to
+have this plugin offer no engine for follower indices, so an engine plugin that replays operations at the
+leader's sequence numbers, as `ReplicationEngine` does, can serve them. Replay fails if the engine applies an
+operation at a different sequence number.
+
 ## CONTRIBUTING GUIDELINES
 
 See [CONTRIBUTING](CONTRIBUTING.md) for more information.
